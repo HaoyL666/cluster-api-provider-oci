@@ -1,0 +1,35 @@
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: OCICluster
+metadata:
+  labels:
+    cluster.x-k8s.io/cluster-name: "${CLUSTER_NAME}"
+  name: "${CLUSTER_NAME}"
+spec:
+  compartmentId: "${OCI_COMPARTMENT_ID}"
+  networkSpec:
+    vcn:
+      name: ${CLUSTER_NAME}-test
+      networkSecurityGroup:
+        list:
+          - name: worker-nsg
+            role: worker
+            egressRules:
+              - egressRule:
+                  isStateless: false
+                  destination: "0.0.0.0/0"
+                  protocol: "6"
+                  destinationType: "CIDR_BLOCK"
+                  description: "Worker Nodes access to Internet"
+            ingressRules:
+              - ingressRule:
+                  isStateless: false
+                  source: "10.0.0.0/16"
+                  protocol: "all"
+                  sourceType: "CIDR_BLOCK"
+                  description: "Allow inter vcn communication"
+      subnets:
+        - name: worker-subnet
+          role: worker
+          type: private
+          cidr: "10.0.10.0/24"
