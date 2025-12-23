@@ -393,12 +393,12 @@ func (m *MachinePoolScope) ReconcileInstanceConfiguration(ctx context.Context) e
 			if err != nil {
 				return err
 			}
+			m.Logger.Info("Full spec launch details", "spec", launchDetailsSpec)
+			m.Logger.Info("Full actual launch details", "actual", launchDetailsActual)
 
 			// Compare only immutable fields that should trigger new instance config creation
 			if m.instanceConfigurationsDiffer(launchDetailsSpec, launchDetailsActual) {
 				m.Logger.Info("Instance configuration differs, creating new one")
-				m.Logger.Info("Full spec launch details", "spec", launchDetailsSpec)
-				m.Logger.Info("Full actual launch details", "actual", launchDetailsActual)
 				// created the launch details pec again as we may have removed certain fields for comparison purposes
 				launchDetailsSpec, err := m.getLaunchInstanceDetails(instanceConfigurationSpec, freeFormTags, definedTags)
 				if err != nil {
