@@ -393,21 +393,12 @@ func (m *MachinePoolScope) ReconcileInstanceConfiguration(ctx context.Context) e
 			if err != nil {
 				return err
 			}
-			// do not compare defined tags
-			launchDetailsSpec.DefinedTags = nil
-			launchDetailsActual.DefinedTags = nil
 
-			if launchDetailsSpec.CreateVnicDetails != nil {
-				launchDetailsSpec.CreateVnicDetails.DefinedTags = nil
-			}
-			if launchDetailsActual.CreateVnicDetails != nil {
-				launchDetailsActual.CreateVnicDetails.DefinedTags = nil
-			}
-			launchDetailsActual.DisplayName = nil
-			launchDetailsSpec.DisplayName = nil
-			if !reflect.DeepEqual(launchDetailsSpec, launchDetailsActual) {
-				m.Logger.Info("Machine pool", "spec", launchDetailsSpec)
-				m.Logger.Info("Machine pool", "actual", launchDetailsActual)
+			// Compare only immutable fields that should trigger new instance config creation
+			if m.instanceConfigurationsDiffer(launchDetailsSpec, launchDetailsActual) {
+				m.Logger.Info("Instance configuration differs, creating new one")
+				m.Logger.Info("Full spec launch details", "spec", launchDetailsSpec)
+				m.Logger.Info("Full actual launch details", "actual", launchDetailsActual)
 				// created the launch details pec again as we may have removed certain fields for comparison purposes
 				launchDetailsSpec, err := m.getLaunchInstanceDetails(instanceConfigurationSpec, freeFormTags, definedTags)
 				if err != nil {
@@ -416,6 +407,11 @@ func (m *MachinePoolScope) ReconcileInstanceConfiguration(ctx context.Context) e
 				err = m.createInstanceConfiguration(ctx, launchDetailsSpec, freeFormTags, definedTags)
 				if err != nil {
 					return err
+				}
+				// Clean up old instance configurations after creating new one
+				if cleanupErr := m.CleanupInstanceConfiguration(ctx, nil); cleanupErr != nil {
+					m.Logger.Error(cleanupErr, "Failed to cleanup old instance configurations")
+					// Don't return error, continue with reconciliation
 				}
 				return m.PatchObject(ctx)
 			}
@@ -977,4 +973,184 @@ func (m *MachinePoolScope) getVnicDetails(instanceConfigurationSpec infrav2exp.I
 		createVnicDetails.DisplayName = instanceConfigurationSpec.InstanceVnicConfiguration.DisplayName
 	}
 	return &createVnicDetails
+}
+
+// instanceConfigurationsDiffer compares only the immutable fields that should trigger new instance config creation
+func (m *MachinePoolScope) instanceConfigurationsDiffer(spec, actual *core.InstanceConfigurationLaunchInstanceDetails) bool {
+	// Compare immutable fields that define instance configuration identity
+	if spec.CompartmentId == nil || actual.CompartmentId == nil || *spec.CompartmentId != *actual.CompartmentId {
+		m.Info("Instance config differs: CompartmentId", "spec", spec.CompartmentId, "actual", actual.CompartmentId)
+		return true
+	}
+	if spec.Shape == nil || actual.Shape == nil || *spec.Shape != *actual.Shape {
+		m.Info("Instance config differs: Shape", "spec", spec.Shape, "actual", actual.Shape)
+		return true
+	}
+	if spec.DedicatedVmHostId == nil && actual.DedicatedVmHostId != nil ||
+		spec.DedicatedVmHostId != nil && actual.DedicatedVmHostId == nil ||
+		(spec.DedicatedVmHostId != nil && actual.DedicatedVmHostId != nil && *spec.DedicatedVmHostId != *actual.DedicatedVmHostId) {
+		m.Info("Instance config differs: DedicatedVmHostId", "spec", spec.DedicatedVmHostId, "actual", actual.DedicatedVmHostId)
+		return true
+	}
+	if spec.CapacityReservationId == nil && actual.CapacityReservationId != nil ||
+		spec.CapacityReservationId != nil && actual.CapacityReservationId == nil ||
+		(spec.CapacityReservationId != nil && actual.CapacityReservationId != nil && *spec.CapacityReservationId != *actual.CapacityReservationId) {
+		m.Info("Instance config differs: CapacityReservationId", "spec", spec.CapacityReservationId, "actual", actual.CapacityReservationId)
+		return true
+	}
+
+	// Compare VNIC details (excluding dynamic tags)
+	if !m.vnicDetailsEqual(spec.CreateVnicDetails, actual.CreateVnicDetails) {
+		m.Info("Instance config differs: VNIC details", "spec_subnet", spec.CreateVnicDetails.SubnetId, "actual_subnet", actual.CreateVnicDetails.SubnetId)
+		return true
+	}
+
+	// Compare source details
+	if !reflect.DeepEqual(spec.SourceDetails, actual.SourceDetails) {
+		m.Info("Instance config differs: SourceDetails", "spec", spec.SourceDetails, "actual", actual.SourceDetails)
+		return true
+	}
+
+	// Compare shape config
+	if !reflect.DeepEqual(spec.ShapeConfig, actual.ShapeConfig) {
+		m.Info("Instance config differs: ShapeConfig", "spec", spec.ShapeConfig, "actual", actual.ShapeConfig)
+		return true
+	}
+
+	// Compare platform config
+	if !reflect.DeepEqual(spec.PlatformConfig, actual.PlatformConfig) {
+		m.Info("Instance config differs: PlatformConfig", "spec", spec.PlatformConfig, "actual", actual.PlatformConfig)
+		return true
+	}
+
+	// Compare agent config
+	if !reflect.DeepEqual(spec.AgentConfig, actual.AgentConfig) {
+		m.Info("Instance config differs: AgentConfig", "spec", spec.AgentConfig, "actual", actual.AgentConfig)
+		return true
+	}
+
+	// Compare launch options
+	if !reflect.DeepEqual(spec.LaunchOptions, actual.LaunchOptions) {
+		m.Info("Instance config differs: LaunchOptions", "spec", spec.LaunchOptions, "actual", actual.LaunchOptions)
+		return true
+	}
+
+	// Compare instance options
+	if !reflect.DeepEqual(spec.InstanceOptions, actual.InstanceOptions) {
+		m.Info("Instance config differs: InstanceOptions", "spec", spec.InstanceOptions, "actual", actual.InstanceOptions)
+		return true
+	}
+
+	// Compare availability config
+	if !reflect.DeepEqual(spec.AvailabilityConfig, actual.AvailabilityConfig) {
+		m.Info("Instance config differs: AvailabilityConfig", "spec", spec.AvailabilityConfig, "actual", actual.AvailabilityConfig)
+		return true
+	}
+
+	// Compare preemptible config
+	if !reflect.DeepEqual(spec.PreemptibleInstanceConfig, actual.PreemptibleInstanceConfig) {
+		m.Info("Instance config differs: PreemptibleInstanceConfig", "spec", spec.PreemptibleInstanceConfig, "actual", actual.PreemptibleInstanceConfig)
+		return true
+	}
+
+	// Compare metadata excluding bootstrap data (user_data is injected at launch time)
+	if !m.metadataEqualExcludingBootstrap(spec.Metadata, actual.Metadata) {
+		m.Info("Instance config differs: Metadata", "spec_keys", getMetadataKeys(spec.Metadata), "actual_keys", getMetadataKeys(actual.Metadata))
+		return true
+	}
+
+	return false
+}
+
+// metadataEqualExcludingBootstrap compares metadata maps excluding the user_data key (bootstrap)
+func (m *MachinePoolScope) metadataEqualExcludingBootstrap(spec, actual map[string]string) bool {
+	if spec == nil && actual == nil {
+		return true
+	}
+	if spec == nil || actual == nil {
+		return false
+	}
+
+	// Create copies excluding user_data
+	specCopy := make(map[string]string)
+	actualCopy := make(map[string]string)
+
+	for k, v := range spec {
+		if k != "user_data" {
+			specCopy[k] = v
+		}
+	}
+	for k, v := range actual {
+		if k != "user_data" {
+			actualCopy[k] = v
+		}
+	}
+
+	return reflect.DeepEqual(specCopy, actualCopy)
+}
+
+// getMetadataKeys returns sorted keys for logging
+func getMetadataKeys(metadata map[string]string) []string {
+	if metadata == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(metadata))
+	for k := range metadata {
+		if k != "user_data" { // Don't log bootstrap data
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// vnicDetailsEqual compares VNIC details excluding dynamic tags
+func (m *MachinePoolScope) vnicDetailsEqual(spec, actual *core.InstanceConfigurationCreateVnicDetails) bool {
+	if spec == nil && actual == nil {
+		return true
+	}
+	if spec == nil || actual == nil {
+		return false
+	}
+
+	// Compare immutable VNIC fields
+	if spec.SubnetId == nil || actual.SubnetId == nil || *spec.SubnetId != *actual.SubnetId {
+		return false
+	}
+	if spec.AssignPublicIp == nil && actual.AssignPublicIp != nil ||
+		spec.AssignPublicIp != nil && actual.AssignPublicIp == nil ||
+		(spec.AssignPublicIp != nil && actual.AssignPublicIp != nil && *spec.AssignPublicIp != *actual.AssignPublicIp) {
+		return false
+	}
+	if spec.HostnameLabel == nil && actual.HostnameLabel != nil ||
+		spec.HostnameLabel != nil && actual.HostnameLabel == nil ||
+		(spec.HostnameLabel != nil && actual.HostnameLabel != nil && *spec.HostnameLabel != *actual.HostnameLabel) {
+		return false
+	}
+	if spec.SkipSourceDestCheck == nil && actual.SkipSourceDestCheck != nil ||
+		spec.SkipSourceDestCheck != nil && actual.SkipSourceDestCheck == nil ||
+		(spec.SkipSourceDestCheck != nil && actual.SkipSourceDestCheck != nil && *spec.SkipSourceDestCheck != *actual.SkipSourceDestCheck) {
+		return false
+	}
+	if spec.AssignPrivateDnsRecord == nil && actual.AssignPrivateDnsRecord != nil ||
+		spec.AssignPrivateDnsRecord != nil && actual.AssignPrivateDnsRecord == nil ||
+		(spec.AssignPrivateDnsRecord != nil && actual.AssignPrivateDnsRecord != nil && *spec.AssignPrivateDnsRecord != *actual.AssignPrivateDnsRecord) {
+		return false
+	}
+	if spec.DisplayName == nil && actual.DisplayName != nil ||
+		spec.DisplayName != nil && actual.DisplayName == nil ||
+		(spec.DisplayName != nil && actual.DisplayName != nil && *spec.DisplayName != *actual.DisplayName) {
+		return false
+	}
+
+	// Compare NSG IDs (order matters)
+	if len(spec.NsgIds) != len(actual.NsgIds) {
+		return false
+	}
+	for i, nsgId := range spec.NsgIds {
+		if nsgId != actual.NsgIds[i] {
+			return false
+		}
+	}
+
+	return true
 }
