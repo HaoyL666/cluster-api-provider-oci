@@ -20,9 +20,9 @@ settings = {
     "deploy_cert_manager": True,
     "preload_images_for_kind": True,
     "kind_cluster_name": "capoci",
-    "capi_version": "v1.12.3",
+    "capi_version": "v1.13.5",
     "cert_manager_version": "v1.16.2",
-    "kubernetes_version": "v1.30.0",
+    "kubernetes_version": "v1.32.11",
 }
 
 # global settings
@@ -42,7 +42,7 @@ if "default_registry" in settings:
 
 tilt_helper_dockerfile_header = """
 # Tilt image
-FROM golang:1.24.3 as tilt-helper
+FROM golang:1.25.12 as tilt-helper
 # Support live reloading with Tilt
 RUN go install github.com/go-delve/delve/cmd/dlv@latest
 RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com/tilt-dev/rerun-process-wrapper/master/restart.sh  && \
