@@ -40,7 +40,6 @@ func (m *OCIMachineTemplate) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	w := new(OCIMachineTemplateWebhook)
 	return ctrl.NewWebhookManagedBy(mgr, m).
 		WithCustomValidator(w).
-		RecoverPanic(false).
 		Complete()
 }
 

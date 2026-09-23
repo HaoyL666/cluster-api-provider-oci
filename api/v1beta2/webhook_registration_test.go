@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 )
 
@@ -38,6 +39,21 @@ type registrationTestManager struct {
 	scheme            *runtime.Scheme
 	webhookServer     webhook.Server
 	converterRegistry conversion.Registry
+}
+
+type registrationTestWebhookServer struct {
+	webhook.Server
+	t *testing.T
+}
+
+func (s *registrationTestWebhookServer) Register(path string, hook http.Handler) {
+	s.t.Helper()
+	admissionWebhook, ok := hook.(*admission.Webhook)
+	if !ok {
+		s.t.Fatalf("webhook %q registered unexpected handler type %T", path, hook)
+	}
+	admissionWebhook.WithRecoverPanic(false)
+	s.Server.Register(path, admissionWebhook)
 }
 
 func (m *registrationTestManager) GetConfig() *rest.Config {
@@ -120,7 +136,10 @@ func TestWebhookRegistrationsServeAdmissionReviews(t *testing.T) {
 				t.Fatalf("add API types to scheme: %v", err)
 			}
 
-			server := webhook.NewServer(webhook.Options{WebhookMux: http.NewServeMux()})
+			server := &registrationTestWebhookServer{
+				Server: webhook.NewServer(webhook.Options{WebhookMux: http.NewServeMux()}),
+				t:      t,
+			}
 			mgr := &registrationTestManager{
 				scheme:            scheme,
 				webhookServer:     server,
@@ -165,8 +184,8 @@ func serveAdmissionReview(t *testing.T, mux *http.ServeMux, path, resource strin
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	responseRecorder := httptest.NewRecorder()
-	// The production registration sets RecoverPanic(false), and ServeMux performs no
-	// panic recovery. Any panic in object construction or dispatch fails this test.
+	// registrationTestWebhookServer disables recovery on the constructed admission
+	// webhook. ServeMux performs no recovery, so construction or dispatch panics fail.
 	mux.ServeHTTP(responseRecorder, req)
 
 	if responseRecorder.Code != http.StatusOK {

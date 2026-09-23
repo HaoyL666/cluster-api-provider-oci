@@ -121,7 +121,6 @@ func (c *OCIManagedCluster) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr, c).
 		WithCustomDefaulter(w).
 		WithCustomValidator(w).
-		RecoverPanic(false).
 		Complete()
 }
 

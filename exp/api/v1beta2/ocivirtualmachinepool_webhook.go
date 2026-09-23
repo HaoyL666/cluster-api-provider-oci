@@ -44,7 +44,6 @@ func (m *OCIVirtualMachinePool) SetupWebhookWithManager(mgr ctrl.Manager) error 
 	return ctrl.NewWebhookManagedBy(mgr, m).
 		WithCustomDefaulter(w).
 		WithCustomValidator(w).
-		RecoverPanic(false).
 		Complete()
 }
 
