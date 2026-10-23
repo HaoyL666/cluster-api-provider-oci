@@ -29,7 +29,7 @@ jobs:
           go-version: '1.26.10'
 
       - name: Build Release Artifacts
-        run: RELEASE_TAG="${{ github.ref_name }}" make release
+        run: RELEASE_TAG="${{ github.ref_name }}" make release PROD_REGISTRY=ghcr.io/haoyl666 IMAGE_NAME=cluster-api-oci-controller-pr551-test
 
       - name: Update crds docs
         run: |
